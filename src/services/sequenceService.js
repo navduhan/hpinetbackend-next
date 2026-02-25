@@ -68,6 +68,41 @@ function resolveSpeciesFasta(speciesId) {
   return path.join(env.PHYLO_ROOT, "data", `${speciesId}.fa`);
 }
 
+function buildSpeciesFastaCandidates(speciesId) {
+  const seen = new Set();
+  const candidates = [];
+  const add = (value) => {
+    const key = String(value || "").trim();
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    candidates.push(resolveSpeciesFasta(key));
+  };
+  add(speciesId);
+  add(String(speciesId).toLowerCase());
+  return candidates;
+}
+
+async function firstReadableFile(paths) {
+  for (const file of paths) {
+    try {
+      await fs.promises.access(file, fs.constants.R_OK);
+      return file;
+    } catch {
+      // try next
+    }
+  }
+  return null;
+}
+
+function matchesGeneId(headerId, targetGene) {
+  if (headerId === targetGene) {
+    return true;
+  }
+  const targetBase = String(targetGene).split(".")[0];
+  const headerBase = String(headerId).split(".")[0];
+  return Boolean(targetBase) && targetBase === headerBase;
+}
+
 async function readSequenceFromFasta(fastaPath, geneId) {
   const stream = fs.createReadStream(fastaPath, { encoding: "utf-8" });
   const rl = readline.createInterface({
@@ -86,7 +121,7 @@ async function readSequenceFromFasta(fastaPath, geneId) {
         if (found) {
           break;
         }
-        if (id === geneId) {
+        if (matchesGeneId(id, geneId)) {
           found = true;
           seqParts = [];
         }
@@ -117,10 +152,8 @@ async function getSequence({ species, gene }) {
     return cached;
   }
 
-  const fastaPath = resolveSpeciesFasta(safeSpecies);
-  try {
-    await fs.promises.access(fastaPath, fs.constants.R_OK);
-  } catch {
+  const fastaPath = await firstReadableFile(buildSpeciesFastaCandidates(safeSpecies));
+  if (!fastaPath) {
     throw new HttpError(404, `FASTA file not found for species '${safeSpecies}'`);
   }
 
