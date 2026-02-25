@@ -416,7 +416,7 @@ async function rebuildPlantSnapshots({ host, pathogen }) {
   if (hostSpecies && pathogenSpecies) {
     targets.push({ host: hostSpecies, pathogen: pathogenSpecies });
   } else {
-    const allCollections = await sourceDb.listCollections({}, { nameOnly: true }).toArray();
+    const allCollections = await sourceDb.db.listCollections({}, { nameOnly: true }).toArray();
     for (const entry of allCollections) {
       const name = String(entry?.name || "");
       if (!name.endsWith("_domains")) {
