@@ -1,0 +1,22 @@
+{
+  "apps": [
+    {
+      "name": "hpinetbackend-next",
+      "cwd": "/Users/naveen/Documents/personal/phd_work/hpinetbackend-next",
+      "script": "npm",
+      "args": "start",
+      "exec_mode": "fork",
+      "instances": 1,
+      "autorestart": true,
+      "max_restarts": 20,
+      "restart_delay": 5000,
+      "max_memory_restart": "1200M",
+      "env": {
+        "NODE_ENV": "production",
+        "PORT": "3816",
+        "MONGODB_URI": "mongodb://127.0.0.1:27017/default",
+        "INTEROLOG_MONGO_DB": "hpinetdb"
+      }
+    }
+  ]
+}
