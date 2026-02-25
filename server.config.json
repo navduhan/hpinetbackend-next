@@ -13,7 +13,7 @@
       "max_memory_restart": "1200M",
       "env": {
         "NODE_ENV": "production",
-        "PORT": "3816",
+        "PORT": "3815",
         "MONGODB_URI": "mongodb://127.0.0.1:27017/default",
         "INTEROLOG_MONGO_DB": "hpinetdb"
       }
