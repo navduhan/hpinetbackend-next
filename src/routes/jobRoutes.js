@@ -78,7 +78,11 @@ router.post(
       console.error(
         `[${new Date().toISOString()}] /api/phyloppi failed`,
         summarizePhyloPayload(body),
-        error.stack || error.message || error
+        {
+          message: error.message,
+          details: error.details,
+          stack: error.stack
+        }
       );
       throw error;
     }

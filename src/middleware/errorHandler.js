@@ -10,7 +10,11 @@ function errorHandler(err, _req, res, _next) {
   if (status >= 500) {
     console.error(
       `[${new Date().toISOString()}] ${req.method} ${req.originalUrl} -> ${status}`,
-      err.stack || err.message || err
+      {
+        message: err.message,
+        details: err.details,
+        stack: err.stack
+      }
     );
   }
   const payload = {
