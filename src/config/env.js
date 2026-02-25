@@ -24,7 +24,7 @@ module.exports = {
   INTEROLOG_MONGO_DB: process.env.INTEROLOG_MONGO_DB || "hpinetdb",
   CORS_ENABLED: asBoolean(process.env.CORS_ENABLED, true),
   CORS_ALLOWED_ORIGINS: (process.env.CORS_ALLOWED_ORIGINS || "*").trim(),
-  REQUEST_TIMEOUT_MS: asNumber(process.env.REQUEST_TIMEOUT_MS, 600000),
+  REQUEST_TIMEOUT_MS: asNumber(process.env.REQUEST_TIMEOUT_MS, 3600000),
   GO_AUTO_DOWNLOAD_OBO: asBoolean(process.env.GO_AUTO_DOWNLOAD_OBO, true),
   GO_OBO_URL: process.env.GO_OBO_URL || "https://purl.obolibrary.org/obo/go/go-basic.obo",
   GO_OBO_PATH: path.resolve(projectRoot, process.env.GO_OBO_PATH || path.join("..", "data", "go-basic.obo")),

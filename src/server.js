@@ -1,15 +1,18 @@
 const { createApp } = require("./app");
 const { connectMongo, mongoose } = require("./db/mongoose");
-const { PORT, MONGODB_URI } = require("./config/env");
+const { PORT, MONGODB_URI, REQUEST_TIMEOUT_MS } = require("./config/env");
 
 async function start() {
   await connectMongo();
   console.log(`Mongo connected: ${MONGODB_URI}`);
 
   const app = createApp();
-  app.listen(PORT, () => {
+  const server = app.listen(PORT, () => {
     console.log(`hpinetbackend-next listening on port ${PORT}`);
   });
+  server.requestTimeout = REQUEST_TIMEOUT_MS;
+  server.timeout = REQUEST_TIMEOUT_MS;
+  server.headersTimeout = Math.max(REQUEST_TIMEOUT_MS + 5000, 65000);
 }
 
 start().catch((error) => {
