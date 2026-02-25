@@ -6,8 +6,27 @@ const { findGenesFromKeyword } = require("../services/annotationService");
 const { runInterologJob } = require("../services/interologService");
 const { runPhyloJob } = require("../services/phyloService");
 const { runGoSimJob } = require("../services/goSimService");
+const { toGeneList } = require("../utils/genes");
 
 const router = express.Router();
+
+function summarizePhyloPayload(body) {
+  return {
+    category: body?.category,
+    hspecies: body?.hspecies,
+    pspecies: body?.pspecies,
+    method: body?.method,
+    threshold: body?.threshold,
+    hi: body?.hi,
+    hc: body?.hc,
+    he: body?.he,
+    pi: body?.pi,
+    pc: body?.pc,
+    pe: body?.pe,
+    hostGenesCount: toGeneList(body?.host_genes).length,
+    pathogenGenesCount: toGeneList(body?.pathogen_genes).length
+  };
+}
 
 router.post(
   "/ppi",
@@ -51,8 +70,18 @@ router.post(
 router.post(
   "/phyloppi",
   asyncHandler(async (req, res) => {
-    const resultId = await runPhyloJob(req.body || {});
-    res.json(resultId);
+    const body = req.body || {};
+    try {
+      const resultId = await runPhyloJob(body);
+      res.json(resultId);
+    } catch (error) {
+      console.error(
+        `[${new Date().toISOString()}] /api/phyloppi failed`,
+        summarizePhyloPayload(body),
+        error.stack || error.message || error
+      );
+      throw error;
+    }
   })
 );
 
