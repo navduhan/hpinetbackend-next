@@ -1,4 +1,5 @@
 const { getAnnotationModels } = require("../models/annotationModels");
+const { useDb } = require("../db/mongoose");
 const { HttpError } = require("../errors/HttpError");
 const { parsePaging } = require("../utils/pagination");
 const { ciContains, ciExact } = require("../utils/regex");
@@ -261,9 +262,98 @@ async function findGenesFromKeyword({ anotType, ids, species, keyword }) {
   return Array.from(new Set(rows.map((row) => row.gene).filter(Boolean)));
 }
 
+async function countBySpeciesWithFallback(model, speciesValue) {
+  const exactFilter = { species: ciExact(speciesValue) };
+  const exactCount = await model.countDocuments(exactFilter);
+  if (exactCount > 0) {
+    const genes = await model.distinct("gene", exactFilter);
+    return {
+      annotations: exactCount,
+      proteins: genes.length
+    };
+  }
+
+  const containsFilter = { species: ciContains(speciesValue) };
+  const containsCount = await model.countDocuments(containsFilter);
+  const genes = await model.distinct("gene", containsFilter);
+  return {
+    annotations: containsCount,
+    proteins: genes.length
+  };
+}
+
+async function getPlantSnapshot({ host, pathogen }) {
+  const hostSpecies = normalizeSpecies(host);
+  const pathogenSpecies = normalizeSpecies(pathogen);
+  if (!hostSpecies || !pathogenSpecies) {
+    throw new HttpError(400, "Missing required query params: host, pathogen");
+  }
+
+  const models = getAnnotationModels();
+  const db = useDb("hpinetdb");
+  const domainCollection = `${hostSpecies}_${pathogenSpecies}`.toLowerCase().endsWith("_domains")
+    ? `${hostSpecies}_${pathogenSpecies}`.toLowerCase()
+    : `${hostSpecies}_${pathogenSpecies}`.toLowerCase() + "_domains";
+
+  const [
+    hostGo,
+    pathogenGo,
+    hostKegg,
+    pathogenKegg,
+    hostInterpro,
+    pathogenInterpro,
+    hostLocal,
+    pathogenLocal,
+    hostTf,
+    pathogenEffector,
+    domainInteractions,
+    domainHostProteins,
+    domainPathogenProteins
+  ] = await Promise.all([
+    countBySpeciesWithFallback(models.GO.host, hostSpecies),
+    countBySpeciesWithFallback(models.GO.pathogen, pathogenSpecies),
+    countBySpeciesWithFallback(models.KEGG.host, hostSpecies),
+    countBySpeciesWithFallback(models.KEGG.pathogen, pathogenSpecies),
+    countBySpeciesWithFallback(models.Interpro.host, hostSpecies),
+    countBySpeciesWithFallback(models.Interpro.pathogen, pathogenSpecies),
+    countBySpeciesWithFallback(models.Local.host, hostSpecies),
+    countBySpeciesWithFallback(models.Local.pathogen, pathogenSpecies),
+    countBySpeciesWithFallback(models.TF.host, hostSpecies),
+    countBySpeciesWithFallback(models.Effector.pathogen, pathogenSpecies),
+    db.collection(domainCollection).countDocuments({}),
+    db.collection(domainCollection).distinct("Host_Protein"),
+    db.collection(domainCollection).distinct("Pathogen_Protein")
+  ]);
+
+  return {
+    host: hostSpecies,
+    pathogen: pathogenSpecies,
+    domain: {
+      interactions: domainInteractions,
+      hostProteins: domainHostProteins.length,
+      pathogenProteins: domainPathogenProteins.length
+    },
+    hostCounts: {
+      go: hostGo,
+      kegg: hostKegg,
+      interpro: hostInterpro,
+      local: hostLocal,
+      tf: hostTf
+    },
+    pathogenCounts: {
+      go: pathogenGo,
+      kegg: pathogenKegg,
+      interpro: pathogenInterpro,
+      local: pathogenLocal,
+      effector: pathogenEffector
+    }
+  };
+}
+
 module.exports = {
   listAnnotation,
   listEffector,
   bundleAnnotation,
-  findGenesFromKeyword
+  findGenesFromKeyword,
+  getPlantSnapshot
 };

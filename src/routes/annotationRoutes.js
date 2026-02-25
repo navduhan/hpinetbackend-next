@@ -3,7 +3,8 @@ const { asyncHandler } = require("../middleware/asyncHandler");
 const {
   listAnnotation,
   listEffector,
-  bundleAnnotation
+  bundleAnnotation,
+  getPlantSnapshot
 } = require("../services/annotationService");
 
 const router = express.Router();
@@ -98,6 +99,17 @@ router.get(
       pathogen: req.query.pathogen,
       hid: req.query.hid,
       pid: req.query.pid
+    });
+    res.json(data);
+  })
+);
+
+router.get(
+  "/plant_snapshot/",
+  asyncHandler(async (req, res) => {
+    const data = await getPlantSnapshot({
+      host: req.query.host,
+      pathogen: req.query.pathogen
     });
     res.json(data);
   })
