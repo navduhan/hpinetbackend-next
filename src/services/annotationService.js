@@ -84,6 +84,50 @@ function normalizeSpecies(species) {
   return String(species || "").trim();
 }
 
+function normalizeGene(gene) {
+  return String(gene || "").trim();
+}
+
+function buildSpeciesCandidates(species) {
+  const base = normalizeSpecies(species);
+  const set = new Set([base]);
+  if (base) {
+    set.add(base.toLowerCase());
+    set.add(base.toUpperCase());
+    set.add(base.charAt(0).toUpperCase() + base.slice(1).toLowerCase());
+  }
+  return Array.from(set).filter(Boolean);
+}
+
+function buildGeneCandidates(gene) {
+  const base = normalizeGene(gene);
+  const set = new Set([base]);
+  if (base.includes(".")) {
+    set.add(base.split(".")[0]);
+  }
+  return Array.from(set).filter(Boolean);
+}
+
+async function findBundleRows(model, species, gene) {
+  const speciesCandidates = buildSpeciesCandidates(species);
+  const geneCandidates = buildGeneCandidates(gene);
+  const fastFilter = {
+    species: { $in: speciesCandidates },
+    gene: { $in: geneCandidates }
+  };
+
+  const fastRows = await model.find(fastFilter).lean().exec();
+  if (fastRows.length > 0) {
+    return fastRows;
+  }
+
+  const relaxedFilter = {
+    species: ciContains(species),
+    $or: geneCandidates.map((item) => ({ gene: ciExact(item) }))
+  };
+  return model.find(relaxedFilter).lean().exec();
+}
+
 function buildPlantSnapshotKey(host, pathogen) {
   return `${String(host || "").trim().toLowerCase()}__${String(pathogen || "").trim().toLowerCase()}`;
 }
@@ -178,9 +222,13 @@ async function bundleAnnotation({ host, pathogen, hid, pid }) {
   if (!host || !pathogen || !hid || !pid) {
     throw new HttpError(400, "Missing required query params: host, pathogen, hid, pid");
   }
+  const cacheKey = `bundle|${String(host).toLowerCase()}|${String(pathogen).toLowerCase()}|${String(hid)}|${String(pid)}`;
+  const cached = getCache(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
   const models = getAnnotationModels();
-  const hostFilter = { species: ciContains(host), gene: ciExact(hid) };
-  const pathogenFilter = { species: ciContains(pathogen), gene: ciExact(pid) };
 
   const [
     hgo,
@@ -194,19 +242,19 @@ async function bundleAnnotation({ host, pathogen, hid, pid }) {
     htf,
     peff
   ] = await Promise.all([
-    models.GO.host.find(hostFilter).lean().exec(),
-    models.GO.pathogen.find(pathogenFilter).lean().exec(),
-    models.KEGG.host.find(hostFilter).lean().exec(),
-    models.KEGG.pathogen.find(pathogenFilter).lean().exec(),
-    models.Local.host.find(hostFilter).lean().exec(),
-    models.Local.pathogen.find(pathogenFilter).lean().exec(),
-    models.Interpro.host.find(hostFilter).lean().exec(),
-    models.Interpro.pathogen.find(pathogenFilter).lean().exec(),
-    models.TF.host.find(hostFilter).lean().exec(),
-    models.Effector.pathogen.find(pathogenFilter).lean().exec()
+    findBundleRows(models.GO.host, host, hid),
+    findBundleRows(models.GO.pathogen, pathogen, pid),
+    findBundleRows(models.KEGG.host, host, hid),
+    findBundleRows(models.KEGG.pathogen, pathogen, pid),
+    findBundleRows(models.Local.host, host, hid),
+    findBundleRows(models.Local.pathogen, pathogen, pid),
+    findBundleRows(models.Interpro.host, host, hid),
+    findBundleRows(models.Interpro.pathogen, pathogen, pid),
+    findBundleRows(models.TF.host, host, hid),
+    findBundleRows(models.Effector.pathogen, pathogen, pid)
   ]);
 
-  return {
+  const response = {
     hgo: dedupeRows(hgo),
     pgo: dedupeRows(pgo),
     hkegg: dedupeRows(hkegg),
@@ -218,6 +266,8 @@ async function bundleAnnotation({ host, pathogen, hid, pid }) {
     htf: dedupeRows(htf),
     peff: dedupeRows(peff)
   };
+  setCache(cacheKey, response);
+  return response;
 }
 
 async function findGenesFromKeyword({ anotType, ids, species, keyword }) {
