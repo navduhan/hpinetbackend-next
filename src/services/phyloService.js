@@ -15,6 +15,43 @@ function normalizePoolName(value) {
   return String(value || "").trim();
 }
 
+async function pathExists(filePath) {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function getBlastCacheRoot() {
+  const configured = String(process.env.PHYLO_BLAST_CACHE_ROOT || "").trim();
+  if (configured) {
+    return path.resolve(configured);
+  }
+  return path.join(env.PHYLO_ROOT, "blast_cache");
+}
+
+async function resolveCachedBlastFile({ cacheRoot, genomePool, species, dbName, index }) {
+  const pool = normalizePoolName(genomePool);
+  const candidates = [
+    path.join(cacheRoot, pool, species, `${dbName}.tsv`),
+    path.join(cacheRoot, pool, species, `${dbName}.txt`),
+    path.join(cacheRoot, pool, species, `${dbName}.blast.tsv`),
+    path.join(cacheRoot, pool, species, `${dbName}.blast.txt`),
+    path.join(cacheRoot, pool, species, `${species}_blast_${index}.tsv`),
+    path.join(cacheRoot, pool, species, `${species}_blast_${index}.txt`),
+    path.join(cacheRoot, pool, `${species}_blast_${index}.tsv`),
+    path.join(cacheRoot, pool, `${species}_blast_${index}.txt`)
+  ];
+  for (const file of candidates) {
+    if (await pathExists(file)) {
+      return file;
+    }
+  }
+  return null;
+}
+
 function resolvePoolConfig(genomePool) {
   const pool = normalizePoolName(genomePool);
   if (pool === "UP82") {
@@ -320,35 +357,68 @@ async function runPhyloJob(payload) {
   const hostPatterns = Object.fromEntries(hostGeneIds.map((_, idx) => [idx, ""]));
   const pathogenPatterns = Object.fromEntries(pathogenGeneIds.map((_, idx) => [idx, ""]));
 
-  await fs.mkdir(env.PHYLO_TMP_ROOT, { recursive: true });
-  const tempDir = await fs.mkdtemp(path.join(env.PHYLO_TMP_ROOT, "job-"));
-  try {
-    const hostTempFasta = path.join(tempDir, `${host}_temp.fa`);
-    const pathogenTempFasta = path.join(tempDir, `${pathogen}_temp.fa`);
+  const blastCacheRoot = getBlastCacheRoot();
+  let tempDir = "";
+  let hostTempFasta = "";
+  let pathogenTempFasta = "";
+
+  async function ensureTempInputs() {
+    if (tempDir) {
+      return;
+    }
+    await fs.mkdir(env.PHYLO_TMP_ROOT, { recursive: true });
+    tempDir = await fs.mkdtemp(path.join(env.PHYLO_TMP_ROOT, "job-"));
+    hostTempFasta = path.join(tempDir, `${host}_temp.fa`);
+    pathogenTempFasta = path.join(tempDir, `${pathogen}_temp.fa`);
     await writeFasta(hostTempFasta, hostRecords);
     await writeFasta(pathogenTempFasta, pathogenRecords);
+  }
 
+  try {
     for (let i = 1; i < genomeNumber; i += 1) {
       const dbName = poolList[i];
       const dbPath = path.join(poolConfig.poolFolder, dbName);
-      const hostOut = path.join(tempDir, `${host}_blast_${i}.txt`);
-      const pathogenOut = path.join(tempDir, `${pathogen}_blast_${i}.txt`);
-
-      await runDiamondBlast({
-        dbPath,
-        queryFasta: hostTempFasta,
-        evalue: he,
-        outputFile: hostOut
+      const hostCachedBlast = await resolveCachedBlastFile({
+        cacheRoot: blastCacheRoot,
+        genomePool,
+        species: host,
+        dbName,
+        index: i
       });
-      await runDiamondBlast({
-        dbPath,
-        queryFasta: pathogenTempFasta,
-        evalue: pe,
-        outputFile: pathogenOut
+      const pathogenCachedBlast = await resolveCachedBlastFile({
+        cacheRoot: blastCacheRoot,
+        genomePool,
+        species: pathogen,
+        dbName,
+        index: i
       });
 
-      const hostPresent = await buildPresenceSet(hostOut, hi, hc);
-      const pathogenPresent = await buildPresenceSet(pathogenOut, pi, pc);
+      let hostBlastFile = hostCachedBlast;
+      let pathogenBlastFile = pathogenCachedBlast;
+      if (!hostBlastFile || !pathogenBlastFile) {
+        await ensureTempInputs();
+      }
+      if (!hostBlastFile) {
+        hostBlastFile = path.join(tempDir, `${host}_blast_${i}.txt`);
+        await runDiamondBlast({
+          dbPath,
+          queryFasta: hostTempFasta,
+          evalue: he,
+          outputFile: hostBlastFile
+        });
+      }
+      if (!pathogenBlastFile) {
+        pathogenBlastFile = path.join(tempDir, `${pathogen}_blast_${i}.txt`);
+        await runDiamondBlast({
+          dbPath,
+          queryFasta: pathogenTempFasta,
+          evalue: pe,
+          outputFile: pathogenBlastFile
+        });
+      }
+
+      const hostPresent = await buildPresenceSet(hostBlastFile, hi, hc);
+      const pathogenPresent = await buildPresenceSet(pathogenBlastFile, pi, pc);
       appendPattern(hostPatterns, hostGeneIds, hostPresent);
       appendPattern(pathogenPatterns, pathogenGeneIds, pathogenPresent);
     }
@@ -371,7 +441,9 @@ async function runPhyloJob(payload) {
     }
     throw new HttpError(500, "JS phylo job failed", error.message || String(error));
   } finally {
-    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+    if (tempDir) {
+      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+    }
   }
 }
 
