@@ -7,6 +7,9 @@
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
     "check": "node --check src/server.js",
+    "snapshot:build": "node scripts/build-plant-snapshots.js",
+    "results:cleanup": "node scripts/cleanup-old-results.js --days 30",
+    "results:cleanup:dry": "node scripts/cleanup-old-results.js --days 30 --dry-run",
     "update": "git pull origin main && npm i && pm2 restart hpinetbackend-next",
     "test": "npm run check"
   },

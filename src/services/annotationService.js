@@ -84,6 +84,15 @@ function normalizeSpecies(species) {
   return String(species || "").trim();
 }
 
+function buildPlantSnapshotKey(host, pathogen) {
+  return `${String(host || "").trim().toLowerCase()}__${String(pathogen || "").trim().toLowerCase()}`;
+}
+
+function getPlantSnapshotCollection() {
+  const hpinetDb = useDb("hpinetdb");
+  return hpinetDb.collection("plant_snapshots");
+}
+
 async function fetchListWithCache({ model, filter, speciesKey, strategy, pageSize, skip }) {
   const collection = model.collection.name;
   const scope = `${collection}|${strategy}|${speciesKey.toLowerCase()}`;
@@ -282,11 +291,11 @@ async function countBySpeciesWithFallback(model, speciesValue) {
   };
 }
 
-async function getPlantSnapshot({ host, pathogen }) {
+async function computePlantSnapshot({ host, pathogen }) {
   const hostSpecies = normalizeSpecies(host);
   const pathogenSpecies = normalizeSpecies(pathogen);
   if (!hostSpecies || !pathogenSpecies) {
-    throw new HttpError(400, "Missing required query params: host, pathogen");
+    throw new HttpError(400, "Missing required params: host, pathogen");
   }
 
   const models = getAnnotationModels();
@@ -325,7 +334,7 @@ async function getPlantSnapshot({ host, pathogen }) {
     db.collection(domainCollection).distinct("Pathogen_Protein")
   ]);
 
-  return {
+  const snapshot = {
     host: hostSpecies,
     pathogen: pathogenSpecies,
     domain: {
@@ -348,6 +357,107 @@ async function getPlantSnapshot({ host, pathogen }) {
       effector: pathogenEffector
     }
   };
+
+  return {
+    key: buildPlantSnapshotKey(hostSpecies, pathogenSpecies),
+    snapshot
+  };
+}
+
+async function upsertPlantSnapshot({ host, pathogen }) {
+  const { key, snapshot } = await computePlantSnapshot({ host, pathogen });
+  const collection = getPlantSnapshotCollection();
+  await collection.createIndex({ key: 1 }, { unique: true });
+  await collection.updateOne(
+    { key },
+    {
+      $set: {
+        key,
+        host: snapshot.host,
+        pathogen: snapshot.pathogen,
+        snapshot,
+        updatedAt: new Date()
+      }
+    },
+    { upsert: true }
+  );
+  return snapshot;
+}
+
+async function getPlantSnapshot({ host, pathogen, allowLiveFallback = true }) {
+  const hostSpecies = normalizeSpecies(host);
+  const pathogenSpecies = normalizeSpecies(pathogen);
+  if (!hostSpecies || !pathogenSpecies) {
+    throw new HttpError(400, "Missing required query params: host, pathogen");
+  }
+
+  const key = buildPlantSnapshotKey(hostSpecies, pathogenSpecies);
+  const collection = getPlantSnapshotCollection();
+  const cached = await collection.findOne({ key }, { projection: { _id: 0, snapshot: 1 } });
+  if (cached?.snapshot) {
+    return cached.snapshot;
+  }
+
+  if (!allowLiveFallback) {
+    throw new HttpError(404, "Snapshot not available. Rebuild plant snapshots first.");
+  }
+
+  return upsertPlantSnapshot({ host: hostSpecies, pathogen: pathogenSpecies });
+}
+
+async function rebuildPlantSnapshots({ host, pathogen }) {
+  const hostSpecies = normalizeSpecies(host);
+  const pathogenSpecies = normalizeSpecies(pathogen);
+  const sourceDb = useDb("hpinetdb");
+  const collection = getPlantSnapshotCollection();
+  await collection.createIndex({ key: 1 }, { unique: true });
+
+  const targets = [];
+  if (hostSpecies && pathogenSpecies) {
+    targets.push({ host: hostSpecies, pathogen: pathogenSpecies });
+  } else {
+    const allCollections = await sourceDb.listCollections({}, { nameOnly: true }).toArray();
+    for (const entry of allCollections) {
+      const name = String(entry?.name || "");
+      if (!name.endsWith("_domains")) {
+        continue;
+      }
+      const pair = name.slice(0, -"_domains".length);
+      const splitAt = pair.indexOf("_");
+      if (splitAt <= 0 || splitAt >= pair.length - 1) {
+        continue;
+      }
+      targets.push({
+        host: pair.slice(0, splitAt),
+        pathogen: pair.slice(splitAt + 1)
+      });
+    }
+  }
+
+  const uniqueTargets = Array.from(
+    new Map(targets.map((item) => [buildPlantSnapshotKey(item.host, item.pathogen), item])).values()
+  );
+
+  let updated = 0;
+  const failed = [];
+  for (const item of uniqueTargets) {
+    try {
+      await upsertPlantSnapshot(item);
+      updated += 1;
+    } catch (error) {
+      failed.push({
+        host: item.host,
+        pathogen: item.pathogen,
+        message: error.message
+      });
+    }
+  }
+
+  return {
+    totalTargets: uniqueTargets.length,
+    updated,
+    failed
+  };
 }
 
 module.exports = {
@@ -355,5 +465,6 @@ module.exports = {
   listEffector,
   bundleAnnotation,
   findGenesFromKeyword,
-  getPlantSnapshot
+  getPlantSnapshot,
+  rebuildPlantSnapshots
 };

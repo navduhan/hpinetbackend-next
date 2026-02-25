@@ -17,6 +17,20 @@
         "MONGODB_URI": "mongodb://127.0.0.1:27017/default",
         "INTEROLOG_MONGO_DB": "hpinetdb"
       }
+    },
+    {
+      "name": "hpinet-results-cleanup",
+      "cwd": "/home/labadmin/apps/hpinetdb/hpinetdbbackend-next",
+      "script": "npm",
+      "args": "run results:cleanup",
+      "exec_mode": "fork",
+      "instances": 1,
+      "autorestart": false,
+      "cron_restart": "30 3 * * *",
+      "env": {
+        "NODE_ENV": "production",
+        "MONGODB_URI": "mongodb://127.0.0.1:27017/default"
+      }
     }
   ]
 }

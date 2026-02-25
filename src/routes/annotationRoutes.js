@@ -4,7 +4,8 @@ const {
   listAnnotation,
   listEffector,
   bundleAnnotation,
-  getPlantSnapshot
+  getPlantSnapshot,
+  rebuildPlantSnapshots
 } = require("../services/annotationService");
 
 const router = express.Router();
@@ -109,7 +110,19 @@ router.get(
   asyncHandler(async (req, res) => {
     const data = await getPlantSnapshot({
       host: req.query.host,
-      pathogen: req.query.pathogen
+      pathogen: req.query.pathogen,
+      allowLiveFallback: req.query.live !== "0"
+    });
+    res.json(data);
+  })
+);
+
+router.post(
+  "/plant_snapshot/rebuild/",
+  asyncHandler(async (req, res) => {
+    const data = await rebuildPlantSnapshots({
+      host: req.body?.host,
+      pathogen: req.body?.pathogen
     });
     res.json(data);
   })
