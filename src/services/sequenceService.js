@@ -11,7 +11,13 @@ function asPositiveInt(value, fallback) {
 
 const CACHE_TTL_MS = asPositiveInt(process.env.SEQUENCE_CACHE_TTL_MS, 10 * 60 * 1000);
 const CACHE_MAX_ENTRIES = asPositiveInt(process.env.SEQUENCE_CACHE_MAX_ENTRIES, 5000);
+const FASTA_MAP_CACHE_TTL_MS = asPositiveInt(process.env.SEQUENCE_FASTA_MAP_CACHE_TTL_MS, 60 * 1000);
 const sequenceCache = new Map();
+let fastaMapCache = {
+  loadedAt: 0,
+  mapPath: "",
+  map: new Map()
+};
 
 function getCache(key) {
   const entry = sequenceCache.get(key);
@@ -68,17 +74,79 @@ function resolveSpeciesFasta(speciesId) {
   return path.join(env.PHYLO_ROOT, "data", `${speciesId}.fa`);
 }
 
-function buildSpeciesFastaCandidates(speciesId) {
+function resolveMappedFastaPath(mappedValue) {
+  const value = String(mappedValue || "").trim();
+  if (!value) return null;
+  if (path.isAbsolute(value)) return value;
+  return path.join(env.PHYLO_ROOT, "data", value);
+}
+
+function getFastaMapPath() {
+  const configured = String(process.env.PHYLO_FASTA_MAP_PATH || "").trim();
+  if (configured) {
+    return path.resolve(configured);
+  }
+  return path.join(env.PHYLO_ROOT, "fasta-map.json");
+}
+
+async function loadFastaMap() {
+  const mapPath = getFastaMapPath();
+  const now = Date.now();
+  if (
+    fastaMapCache.mapPath === mapPath &&
+    now - fastaMapCache.loadedAt < FASTA_MAP_CACHE_TTL_MS
+  ) {
+    return fastaMapCache.map;
+  }
+
+  try {
+    const raw = await fs.promises.readFile(mapPath, "utf-8");
+    const parsed = JSON.parse(raw);
+    const map = new Map();
+    if (parsed && typeof parsed === "object") {
+      for (const [key, value] of Object.entries(parsed)) {
+        const normKey = String(key || "").trim().toLowerCase();
+        const normValue = String(value || "").trim();
+        if (normKey && normValue) {
+          map.set(normKey, normValue);
+        }
+      }
+    }
+    fastaMapCache = {
+      loadedAt: now,
+      mapPath,
+      map
+    };
+    return map;
+  } catch {
+    fastaMapCache = {
+      loadedAt: now,
+      mapPath,
+      map: new Map()
+    };
+    return fastaMapCache.map;
+  }
+}
+
+async function buildSpeciesFastaCandidates(speciesId) {
   const seen = new Set();
   const candidates = [];
   const add = (value) => {
     const key = String(value || "").trim();
     if (!key || seen.has(key)) return;
     seen.add(key);
-    candidates.push(resolveSpeciesFasta(key));
+    candidates.push(key);
   };
-  add(speciesId);
-  add(String(speciesId).toLowerCase());
+
+  const map = await loadFastaMap();
+  const mapValue = map.get(String(speciesId).toLowerCase());
+  const mappedPath = resolveMappedFastaPath(mapValue);
+  if (mappedPath) {
+    add(mappedPath);
+  }
+
+  add(resolveSpeciesFasta(speciesId));
+  add(resolveSpeciesFasta(String(speciesId).toLowerCase()));
   return candidates;
 }
 
@@ -89,6 +157,30 @@ async function firstReadableFile(paths) {
       return file;
     } catch {
       // try next
+    }
+  }
+  return null;
+}
+
+async function findCaseInsensitiveSpeciesFasta(speciesId) {
+  const dataDir = path.join(env.PHYLO_ROOT, "data");
+  const targetName = `${String(speciesId || "").trim().toLowerCase()}.fa`;
+  if (!targetName || targetName === ".fa") {
+    return null;
+  }
+  let entries;
+  try {
+    entries = await fs.promises.readdir(dataDir, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+
+  for (const entry of entries) {
+    if (!entry.isFile()) {
+      continue;
+    }
+    if (entry.name.toLowerCase() === targetName) {
+      return path.join(dataDir, entry.name);
     }
   }
   return null;
@@ -152,12 +244,14 @@ async function getSequence({ species, gene }) {
     return cached;
   }
 
-  const fastaPath = await firstReadableFile(buildSpeciesFastaCandidates(safeSpecies));
-  if (!fastaPath) {
+  const candidates = await buildSpeciesFastaCandidates(safeSpecies);
+  const directPath = await firstReadableFile(candidates);
+  const fallbackPath = directPath || (await findCaseInsensitiveSpeciesFasta(safeSpecies));
+  if (!fallbackPath) {
     throw new HttpError(404, `FASTA file not found for species '${safeSpecies}'`);
   }
 
-  const sequence = await readSequenceFromFasta(fastaPath, safeGene);
+  const sequence = await readSequenceFromFasta(fallbackPath, safeGene);
   const payload = {
     species: safeSpecies,
     gene: safeGene,
