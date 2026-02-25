@@ -2,7 +2,7 @@
   "apps": [
     {
       "name": "hpinetbackend-next",
-      "cwd": "/Users/naveen/Documents/personal/phd_work/hpinetbackend-next",
+      "cwd": "/home/labadmin/apps/hpinetdb/hpinetdbbackend-next",
       "script": "npm",
       "args": "start",
       "exec_mode": "fork",
