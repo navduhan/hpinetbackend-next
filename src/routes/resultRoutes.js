@@ -17,7 +17,8 @@ router.get(
       resultId: req.query.results,
       category: req.query.category,
       page: req.query.page,
-      size: req.query.size
+      size: req.query.size,
+      q: req.query.q
     });
     res.json(data);
   })

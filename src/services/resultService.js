@@ -58,6 +58,44 @@ function getCategorySchema(category) {
   throw new HttpError(400, `Invalid category: ${category}`);
 }
 
+function escapeRegex(value) {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function buildQuickSearchClause(q, fields) {
+  const keyword = String(q || "").trim();
+  if (!keyword) {
+    return null;
+  }
+  const regex = new RegExp(escapeRegex(keyword), "i");
+  return {
+    $or: fields.map((field) => ({ [field]: regex }))
+  };
+}
+
+function withQuickSearch(baseQuery, q, fields) {
+  const clause = buildQuickSearchClause(q, fields);
+  if (!clause) {
+    return baseQuery;
+  }
+  if (!baseQuery || Object.keys(baseQuery).length === 0) {
+    return clause;
+  }
+  return {
+    $and: [baseQuery, clause]
+  };
+}
+
+function getResultSearchFields(category) {
+  if (category === "go" || category === "gosim") {
+    return ["Host_Protein", "Pathogen_Protein", "Host_GO", "Pathogen_GO"];
+  }
+  if (category === "phylo") {
+    return ["Host_Protein", "Pathogen_Protein", "Host_Pattern", "Pathogen_Pattern"];
+  }
+  return ["Host_Protein", "Pathogen_Protein", "ProteinA", "ProteinB", "intdb_x", "intdb", "Method", "Type", "PMID"];
+}
+
 function getResultModel(resultId, category) {
   if (!resultId) {
     throw new HttpError(400, "Missing required query param: results");
@@ -67,14 +105,15 @@ function getResultModel(resultId, category) {
   return getOrCreateModel(db, resultId, schema);
 }
 
-async function getResults({ resultId, category, page, size }) {
+async function getResults({ resultId, category, page, size, q }) {
   const model = getResultModel(resultId, category);
+  const query = withQuickSearch({}, q, getResultSearchFields(category));
   const { pageSize, skip } = parsePaging(page, size, { defaultSize: 1000, maxSize: 10000 });
   const [results, total, host, pathogen] = await Promise.all([
-    model.find({}).limit(pageSize).skip(skip).lean().exec(),
-    model.countDocuments({}),
-    model.distinct("Host_Protein"),
-    model.distinct("Pathogen_Protein")
+    model.find(query).limit(pageSize).skip(skip).lean().exec(),
+    model.countDocuments(query),
+    model.distinct("Host_Protein", query),
+    model.distinct("Pathogen_Protein", query)
   ]);
   return {
     results,
@@ -132,7 +171,17 @@ function buildDomainBaseQuery(body) {
   if (intdb.length > 0) {
     query.intdb = { $in: intdb };
   }
-  return query;
+  return withQuickSearch(query, body.q, [
+    "Host_Protein",
+    "Pathogen_Protein",
+    "ProteinA",
+    "ProteinB",
+    "DomainA_name",
+    "DomianA_desc",
+    "DomainB_name",
+    "DomianB_desc",
+    "intdb"
+  ]);
 }
 
 function buildDomainQuerySignature({ model, body, query, genes }) {

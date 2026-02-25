@@ -1,6 +1,5 @@
 const fs = require("node:fs/promises");
 const path = require("node:path");
-const os = require("node:os");
 const { spawn } = require("node:child_process");
 const env = require("../config/env");
 const { HttpError } = require("../errors/HttpError");
@@ -321,7 +320,8 @@ async function runPhyloJob(payload) {
   const hostPatterns = Object.fromEntries(hostGeneIds.map((_, idx) => [idx, ""]));
   const pathogenPatterns = Object.fromEntries(pathogenGeneIds.map((_, idx) => [idx, ""]));
 
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "hpinet-phylo-"));
+  await fs.mkdir(env.PHYLO_TMP_ROOT, { recursive: true });
+  const tempDir = await fs.mkdtemp(path.join(env.PHYLO_TMP_ROOT, "job-"));
   try {
     const hostTempFasta = path.join(tempDir, `${host}_temp.fa`);
     const pathogenTempFasta = path.join(tempDir, `${pathogen}_temp.fa`);
@@ -378,4 +378,3 @@ async function runPhyloJob(payload) {
 module.exports = {
   runPhyloJob
 };
-

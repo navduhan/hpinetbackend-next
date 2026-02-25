@@ -7,6 +7,7 @@ const {
   getPlantSnapshot,
   rebuildPlantSnapshots
 } = require("../services/annotationService");
+const { getSequence, getSequencePair } = require("../services/sequenceService");
 
 const router = express.Router();
 
@@ -99,6 +100,30 @@ router.get(
       host: req.query.host,
       pathogen: req.query.pathogen,
       hid: req.query.hid,
+      pid: req.query.pid
+    });
+    res.json(data);
+  })
+);
+
+router.get(
+  "/sequence/",
+  asyncHandler(async (req, res) => {
+    const data = await getSequence({
+      species: req.query.species,
+      gene: req.query.gene
+    });
+    res.json(data);
+  })
+);
+
+router.get(
+  "/sequence_pair/",
+  asyncHandler(async (req, res) => {
+    const data = await getSequencePair({
+      host: req.query.host,
+      hid: req.query.hid,
+      pathogen: req.query.pathogen,
       pid: req.query.pid
     });
     res.json(data);

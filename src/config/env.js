@@ -30,6 +30,7 @@ module.exports = {
   GO_OBO_PATH: path.resolve(projectRoot, process.env.GO_OBO_PATH || path.join("..", "data", "go-basic.obo")),
   GO_MONGO_COLLECTION: process.env.GO_MONGO_COLLECTION || "go_terms_v2",
   PHYLO_ROOT: path.resolve(projectRoot, process.env.PHYLO_ROOT || path.join("data", "phylo")),
+  PHYLO_TMP_ROOT: path.resolve(projectRoot, process.env.PHYLO_TMP_ROOT || path.join("tmp", "phylo-jobs")),
   DIAMOND_BIN: process.env.DIAMOND_BIN || "/opt/miniconda3/envs/ml-gpu/bin/diamond",
   PHYLO_THREADS: asNumber(process.env.PHYLO_THREADS, 6)
 };

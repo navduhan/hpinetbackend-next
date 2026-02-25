@@ -358,8 +358,14 @@ async function runInterologJob(payload, geneCsv) {
       return persistResults(interologRows);
     }
 
-    const hostSpecies = String(payload.hspecies || "").split("_")[1] || "";
-    const pathogenSpecies = String(payload.pspecies || "").split("_")[1] || "";
+    const hostSpecies = String(payload.hspecies || "")
+      .replace(/^interolog_/i, "")
+      .trim()
+      .toLowerCase();
+    const pathogenSpecies = String(payload.pspecies || "")
+      .replace(/^interolog_/i, "")
+      .trim()
+      .toLowerCase();
     const domainTable = assertSafeIdentifier(`${hostSpecies}_${pathogenSpecies}_domains`, "consensus domain table");
     const domainRows = await fetchDomainRowsMongo(mongoDb, domainTable, idType, genes, domdbList);
     const consensusRows = mergeConsensus(interologRows, domainRows);
