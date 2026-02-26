@@ -19,7 +19,10 @@ function asPositiveInt(value, fallback) {
 
 const DOMAIN_CACHE_TTL_MS = asPositiveInt(process.env.DOMAIN_CACHE_TTL_MS, 30000);
 const DOMAIN_CACHE_MAX_ENTRIES = asPositiveInt(process.env.DOMAIN_CACHE_MAX_ENTRIES, 1000);
+const RESULT_CACHE_TTL_MS = asPositiveInt(process.env.RESULT_CACHE_TTL_MS, 15000);
+const RESULT_CACHE_MAX_ENTRIES = asPositiveInt(process.env.RESULT_CACHE_MAX_ENTRIES, 300);
 const domainCache = new Map();
+const resultCache = new Map();
 
 function getCacheEntry(key) {
   const entry = domainCache.get(key);
@@ -48,6 +51,36 @@ function setCacheEntry(key, value) {
       break;
     }
     domainCache.delete(oldestKey);
+  }
+}
+
+function getResultCacheEntry(key) {
+  const entry = resultCache.get(key);
+  if (!entry) {
+    return undefined;
+  }
+  if (entry.expiresAt <= Date.now()) {
+    resultCache.delete(key);
+    return undefined;
+  }
+  return entry.value;
+}
+
+function setResultCacheEntry(key, value) {
+  if (resultCache.has(key)) {
+    resultCache.delete(key);
+  }
+  resultCache.set(key, {
+    value,
+    expiresAt: Date.now() + RESULT_CACHE_TTL_MS
+  });
+
+  while (resultCache.size > RESULT_CACHE_MAX_ENTRIES) {
+    const oldestKey = resultCache.keys().next().value;
+    if (!oldestKey) {
+      break;
+    }
+    resultCache.delete(oldestKey);
   }
 }
 
@@ -97,6 +130,90 @@ function getResultSearchFields(category) {
   return ["Host_Protein", "Pathogen_Protein", "ProteinA", "ProteinB", "intdb_x", "intdb", "Method", "Type", "PMID"];
 }
 
+function getProjectionFields(category) {
+  const c = String(category || "").toLowerCase();
+  if (c === "go" || c === "gosim") {
+    return {
+      Host_Protein: 1,
+      Pathogen_Protein: 1,
+      Host_GO: 1,
+      Pathogen_GO: 1,
+      Score: 1,
+      score: 1,
+      Confidence: 1
+    };
+  }
+  if (c === "phylo") {
+    return {
+      Host_Protein: 1,
+      Pathogen_Protein: 1,
+      Score: 1,
+      score: 1,
+      Confidence: 1,
+      Host_Pattern: 1,
+      Pathogen_Pattern: 1
+    };
+  }
+  if (c === "domain") {
+    return {
+      Host_Protein: 1,
+      Pathogen_Protein: 1,
+      ProteinA: 1,
+      ProteinB: 1,
+      Score: 1,
+      score: 1,
+      Confidence: 1,
+      intdb: 1,
+      DomainA_name: 1,
+      DomianA_name: 1,
+      DomainA_interpro: 1,
+      DomianA_interpro: 1,
+      DomainB_name: 1,
+      DomianB_name: 1,
+      DomainB_interpro: 1,
+      DomianB_interpro: 1
+    };
+  }
+  if (c === "consensus") {
+    return {
+      Host_Protein: 1,
+      Pathogen_Protein: 1,
+      ProteinA: 1,
+      ProteinB: 1,
+      Method: 1,
+      Type: 1,
+      Confidence: 1,
+      Score: 1,
+      score: 1,
+      PMID: 1,
+      intdb_x: 1,
+      intdb: 1,
+      DomainA_name: 1,
+      DomianA_name: 1,
+      DomainA_interpro: 1,
+      DomianA_interpro: 1,
+      DomainB_name: 1,
+      DomianB_name: 1,
+      DomainB_interpro: 1,
+      DomianB_interpro: 1
+    };
+  }
+  return {
+    Host_Protein: 1,
+    Pathogen_Protein: 1,
+    ProteinA: 1,
+    ProteinB: 1,
+    Method: 1,
+    Type: 1,
+    Confidence: 1,
+    Score: 1,
+    score: 1,
+    PMID: 1,
+    intdb_x: 1,
+    intdb: 1
+  };
+}
+
 function getResultModel(resultId, category) {
   if (!resultId) {
     throw new HttpError(400, "Missing required query param: results");
@@ -122,44 +239,62 @@ function inferCategoryFromRows(rows, fallback = "interolog") {
 }
 
 async function getResults({ resultId, category, page, size, q }) {
+  const cacheKey = JSON.stringify({ type: "results", resultId, category, page, size, q: String(q || "") });
+  const cached = getResultCacheEntry(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
   const model = getResultModel(resultId, category);
   const query = withQuickSearch({}, q, getResultSearchFields(category));
+  const projection = getProjectionFields(category);
   const { pageSize, skip } = parsePaging(page, size, { defaultSize: 1000, maxSize: 10000 });
   const [rawResults, total, host, pathogen] = await Promise.all([
-    model.find(query).limit(pageSize).skip(skip).lean().exec(),
+    model.find(query, projection).limit(pageSize).skip(skip).lean().exec(),
     model.countDocuments(query),
     model.distinct("Host_Protein", query),
     model.distinct("Pathogen_Protein", query)
   ]);
   const results = scoreRowsConfidence(rawResults, category);
-  return {
+  const response = {
     results,
     total,
     hostcount: host.length,
     pathogencount: pathogen.length
   };
+  setResultCacheEntry(cacheKey, response);
+  return response;
 }
 
 async function getNetwork({ resultId, category }) {
   if (!resultId) {
     throw new HttpError(400, "Missing required query param: results");
   }
+
+  const cacheKey = JSON.stringify({ type: "network", resultId, category: String(category || "") });
+  const cached = getResultCacheEntry(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
   const db = useDb("hpinet_results");
   const model = getOrCreateModel(db, resultId, wheatSchema);
   const [rawResults, total, host, pathogen] = await Promise.all([
-    model.find({}).lean().exec(),
+    model.find({}, getProjectionFields(category || "interolog")).lean().exec(),
     model.countDocuments({}),
     model.distinct("Host_Protein"),
     model.distinct("Pathogen_Protein")
   ]);
   const resolvedCategory = inferCategoryFromRows(rawResults, category || "interolog");
   const results = scoreRowsConfidence(rawResults, resolvedCategory);
-  return {
+  const response = {
     results,
     total,
     hostcount: host.length,
     pathogencount: pathogen.length
   };
+  setResultCacheEntry(cacheKey, response);
+  return response;
 }
 
 async function downloadResults({ resultId, category }) {
@@ -168,7 +303,7 @@ async function downloadResults({ resultId, category }) {
   }
   const db = useDb("hpinet_results");
   const model = getOrCreateModel(db, resultId, wheatSchema);
-  const rawResults = await model.find({}).lean().exec();
+  const rawResults = await model.find({}, getProjectionFields(category || "interolog")).lean().exec();
   const resolvedCategory = inferCategoryFromRows(rawResults, category || "interolog");
   const results = scoreRowsConfidence(rawResults, resolvedCategory);
   return { results };

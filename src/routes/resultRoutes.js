@@ -1,5 +1,6 @@
 const express = require("express");
 const { asyncHandler } = require("../middleware/asyncHandler");
+const { getConfidenceMeta } = require("../utils/confidence");
 const {
   getResults,
   getNetwork,
@@ -9,6 +10,10 @@ const {
 } = require("../services/resultService");
 
 const router = express.Router();
+
+router.get("/confidence_meta/", (req, res) => {
+  res.json(getConfidenceMeta());
+});
 
 router.get(
   "/results/",

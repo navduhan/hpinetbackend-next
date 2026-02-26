@@ -1,3 +1,26 @@
+const SOURCE_WEIGHTS = {
+  hpidb: 0.9,
+  intact: 0.86,
+  mint: 0.84,
+  dip: 0.8,
+  biogrid: 0.78,
+  arabihpi: 0.72,
+  string: 0.7,
+  "3did": 0.86,
+  iddi: 0.82,
+  domine: 0.74
+};
+
+const CATEGORY_WEIGHTS = {
+  consensus: { method: 0.45, source: 0.2, cross: 0.3, annotation: 0.05 },
+  interolog: { method: 0.55, source: 0.28, cross: 0.12, annotation: 0.05 },
+  domain: { method: 0.6, source: 0.25, cross: 0.1, annotation: 0.05 },
+  go: { method: 0.72, source: 0.03, cross: 0.05, annotation: 0.2 },
+  gosim: { method: 0.72, source: 0.03, cross: 0.05, annotation: 0.2 },
+  phylo: { method: 0.76, source: 0.04, cross: 0.1, annotation: 0.1 },
+  default: { method: 0.6, source: 0.2, cross: 0.15, annotation: 0.05 }
+};
+
 function clamp01(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return 0;
@@ -45,19 +68,7 @@ function parseSourceList(row) {
 
 function sourceWeight(source) {
   const k = String(source || "").toLowerCase();
-  const weights = {
-    hpidb: 0.9,
-    intact: 0.86,
-    mint: 0.84,
-    dip: 0.8,
-    biogrid: 0.78,
-    arabihpi: 0.72,
-    string: 0.7,
-    "3did": 0.86,
-    iddi: 0.82,
-    domine: 0.74
-  };
-  return weights[k] || 0.68;
+  return SOURCE_WEIGHTS[k] || 0.68;
 }
 
 function average(values, fallback = 0) {
@@ -121,12 +132,7 @@ function inferAnnotationSupport(row, category) {
 
 function getWeights(category) {
   const c = String(category || "").toLowerCase();
-  if (c === "consensus") return { method: 0.45, source: 0.2, cross: 0.3, annotation: 0.05 };
-  if (c === "interolog") return { method: 0.55, source: 0.28, cross: 0.12, annotation: 0.05 };
-  if (c === "domain") return { method: 0.6, source: 0.25, cross: 0.1, annotation: 0.05 };
-  if (c === "go" || c === "gosim") return { method: 0.72, source: 0.03, cross: 0.05, annotation: 0.2 };
-  if (c === "phylo") return { method: 0.76, source: 0.04, cross: 0.1, annotation: 0.1 };
-  return { method: 0.6, source: 0.2, cross: 0.15, annotation: 0.05 };
+  return CATEGORY_WEIGHTS[c] || CATEGORY_WEIGHTS.default;
 }
 
 function tierFromConfidence(confidence) {
@@ -146,6 +152,7 @@ function methodsPresent(category) {
 }
 
 function scoreRowConfidence(row, category) {
+  const rawConfidence = row?.Confidence ?? row?.Score ?? row?.score ?? null;
   const methodScore = clamp01(inferMethodScore(row, category));
   const sources = parseSourceList(row);
   const sourceScore = clamp01(average(sources.map(sourceWeight), 0.65));
@@ -163,6 +170,7 @@ function scoreRowConfidence(row, category) {
 
   return {
     ...row,
+    RawConfidence: rawConfidence,
     Confidence: rounded,
     ConfidenceTier: tierFromConfidence(rounded),
     ConfidenceComponents: {
@@ -181,7 +189,21 @@ function scoreRowsConfidence(rows, category) {
   return rows.map((row) => scoreRowConfidence(row, category));
 }
 
+function getConfidenceMeta() {
+  return {
+    formula: "Confidence = (method x Wm) + (source x Ws) + (cross x Wx) + (annotation x Wa)",
+    tierThresholds: {
+      high: ">= 0.75",
+      medium: ">= 0.50 and < 0.75",
+      low: "< 0.50"
+    },
+    categoryWeights: CATEGORY_WEIGHTS,
+    sourceWeights: SOURCE_WEIGHTS
+  };
+}
+
 module.exports = {
   scoreRowConfidence,
-  scoreRowsConfidence
+  scoreRowsConfidence,
+  getConfidenceMeta
 };

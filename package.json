@@ -8,6 +8,8 @@
     "start": "node src/server.js",
     "check": "node --check src/server.js",
     "snapshot:build": "node scripts/build-plant-snapshots.js",
+    "db:indexes": "node scripts/create-mongo-indexes.js",
+    "db:indexes:dry": "node scripts/create-mongo-indexes.js --dry-run",
     "results:cleanup": "node scripts/cleanup-old-results.js --days 30",
     "results:cleanup:dry": "node scripts/cleanup-old-results.js --days 30 --dry-run",
     "update": "git pull origin main && npm i && pm2 restart hpinetbackend-next",
