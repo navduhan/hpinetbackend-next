@@ -15,7 +15,9 @@
         "NODE_ENV": "production",
         "PORT": "3815",
         "MONGODB_URI": "mongodb://127.0.0.1:27017/default",
-        "INTEROLOG_MONGO_DB": "hpinetdb"
+        "INTEROLOG_MONGO_DB": "hpinetdb",
+        "CORS_ENABLED": "true",
+        "CORS_ALLOWED_ORIGINS": "https://kaabil.net,https://bioinfo.usu.edu"
       }
     },
     {
