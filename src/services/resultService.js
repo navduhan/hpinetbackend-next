@@ -3,6 +3,7 @@ const { HttpError } = require("../errors/HttpError");
 const { parsePaging } = require("../utils/pagination");
 const { toGeneList, toGeneCsv } = require("../utils/genes");
 const { findGenesFromKeyword } = require("./annotationService");
+const { scoreRowsConfidence } = require("../utils/confidence");
 const {
   wheatSchema,
   goppiSchema,
@@ -105,16 +106,32 @@ function getResultModel(resultId, category) {
   return getOrCreateModel(db, resultId, schema);
 }
 
+function inferCategoryFromRows(rows, fallback = "interolog") {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return fallback;
+  }
+  const row = rows[0] || {};
+  if ("Host_GO" in row || "Pathogen_GO" in row) return "go";
+  if ("Host_Pattern" in row || "Pathogen_Pattern" in row) return "phylo";
+  if ("DomianA_interpro" in row || "DomainA_interpro" in row || "intdb" in row) {
+    if ("intdb_x" in row || "Method" in row) return "consensus";
+    return "domain";
+  }
+  if ("intdb_x" in row || "Method" in row || "PMID" in row) return "interolog";
+  return fallback;
+}
+
 async function getResults({ resultId, category, page, size, q }) {
   const model = getResultModel(resultId, category);
   const query = withQuickSearch({}, q, getResultSearchFields(category));
   const { pageSize, skip } = parsePaging(page, size, { defaultSize: 1000, maxSize: 10000 });
-  const [results, total, host, pathogen] = await Promise.all([
+  const [rawResults, total, host, pathogen] = await Promise.all([
     model.find(query).limit(pageSize).skip(skip).lean().exec(),
     model.countDocuments(query),
     model.distinct("Host_Protein", query),
     model.distinct("Pathogen_Protein", query)
   ]);
+  const results = scoreRowsConfidence(rawResults, category);
   return {
     results,
     total,
@@ -123,18 +140,20 @@ async function getResults({ resultId, category, page, size, q }) {
   };
 }
 
-async function getNetwork({ resultId }) {
+async function getNetwork({ resultId, category }) {
   if (!resultId) {
     throw new HttpError(400, "Missing required query param: results");
   }
   const db = useDb("hpinet_results");
   const model = getOrCreateModel(db, resultId, wheatSchema);
-  const [results, total, host, pathogen] = await Promise.all([
+  const [rawResults, total, host, pathogen] = await Promise.all([
     model.find({}).lean().exec(),
     model.countDocuments({}),
     model.distinct("Host_Protein"),
     model.distinct("Pathogen_Protein")
   ]);
+  const resolvedCategory = inferCategoryFromRows(rawResults, category || "interolog");
+  const results = scoreRowsConfidence(rawResults, resolvedCategory);
   return {
     results,
     total,
@@ -143,13 +162,15 @@ async function getNetwork({ resultId }) {
   };
 }
 
-async function downloadResults({ resultId }) {
+async function downloadResults({ resultId, category }) {
   if (!resultId) {
     throw new HttpError(400, "Missing required query param: results");
   }
   const db = useDb("hpinet_results");
   const model = getOrCreateModel(db, resultId, wheatSchema);
-  const results = await model.find({}).lean().exec();
+  const rawResults = await model.find({}).lean().exec();
+  const resolvedCategory = inferCategoryFromRows(rawResults, category || "interolog");
+  const results = scoreRowsConfidence(rawResults, resolvedCategory);
   return { results };
 }
 
@@ -269,10 +290,11 @@ async function getDomainResults(body) {
         return summary;
       });
 
-  const [results, summary] = await Promise.all([
+  const [rawResults, summary] = await Promise.all([
     model.find(query).limit(pageSize).skip(skip).lean().exec(),
     summaryPromise
   ]);
+  const results = scoreRowsConfidence(rawResults, "domain");
 
   const tableName = `hpinet${Date.now()}results`;
   const collection = resultsDb.collection(tableName);

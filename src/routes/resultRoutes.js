@@ -27,7 +27,10 @@ router.get(
 router.get(
   "/network/",
   asyncHandler(async (req, res) => {
-    const data = await getNetwork({ resultId: req.query.results });
+    const data = await getNetwork({
+      resultId: req.query.results,
+      category: req.query.category
+    });
     res.json(data);
   })
 );
@@ -35,7 +38,10 @@ router.get(
 router.get(
   "/download/",
   asyncHandler(async (req, res) => {
-    const data = await downloadResults({ resultId: req.query.results });
+    const data = await downloadResults({
+      resultId: req.query.results,
+      category: req.query.category
+    });
     res.json(data);
   })
 );
