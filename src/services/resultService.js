@@ -17,6 +17,11 @@ function asPositiveInt(value, fallback) {
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
 }
 
+function asNonNegativeInt(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : fallback;
+}
+
 const DOMAIN_CACHE_TTL_MS = asPositiveInt(process.env.DOMAIN_CACHE_TTL_MS, 30000);
 const DOMAIN_CACHE_MAX_ENTRIES = asPositiveInt(process.env.DOMAIN_CACHE_MAX_ENTRIES, 1000);
 const RESULT_CACHE_TTL_MS = asPositiveInt(process.env.RESULT_CACHE_TTL_MS, 15000);
@@ -266,12 +271,26 @@ async function getResults({ resultId, category, page, size, q }) {
   return response;
 }
 
-async function getNetwork({ resultId, category }) {
+async function getNetwork({ resultId, category, limit, offset, sort }) {
   if (!resultId) {
     throw new HttpError(400, "Missing required query param: results");
   }
 
-  const cacheKey = JSON.stringify({ type: "network", resultId, category: String(category || "") });
+  const safeLimit = Math.min(asPositiveInt(limit, 5000), 10000);
+  const safeOffset = asNonNegativeInt(offset, 0);
+  const safeSort = String(sort || "confidence_desc").toLowerCase();
+  const sortSpec = safeSort === "recent"
+    ? { _id: -1 }
+    : { Confidence: -1, Score: -1, score: -1, _id: -1 };
+
+  const cacheKey = JSON.stringify({
+    type: "network",
+    resultId,
+    category: String(category || ""),
+    limit: safeLimit,
+    offset: safeOffset,
+    sort: safeSort
+  });
   const cached = getResultCacheEntry(cacheKey);
   if (cached) {
     return cached;
@@ -279,19 +298,32 @@ async function getNetwork({ resultId, category }) {
 
   const db = useDb("hpinet_results");
   const model = getOrCreateModel(db, resultId, wheatSchema);
-  const [rawResults, total, host, pathogen] = await Promise.all([
-    model.find({}, getProjectionFields(category || "interolog")).lean().exec(),
-    model.countDocuments({}),
-    model.distinct("Host_Protein"),
-    model.distinct("Pathogen_Protein")
+  const [rawResults, total] = await Promise.all([
+    model
+      .find({}, getProjectionFields(category || "interolog"))
+      .sort(sortSpec)
+      .skip(safeOffset)
+      .limit(safeLimit)
+      .lean()
+      .exec(),
+    model.countDocuments({})
   ]);
   const resolvedCategory = inferCategoryFromRows(rawResults, category || "interolog");
   const results = scoreRowsConfidence(rawResults, resolvedCategory);
+  const hostSet = new Set(results.map((row) => row.Host_Protein).filter(Boolean));
+  const pathogenSet = new Set(results.map((row) => row.Pathogen_Protein).filter(Boolean));
+  const returned = results.length;
+  const hasMore = safeOffset + returned < total;
   const response = {
     results,
     total,
-    hostcount: host.length,
-    pathogencount: pathogen.length
+    returned,
+    offset: safeOffset,
+    limit: safeLimit,
+    hasMore,
+    nextOffset: hasMore ? safeOffset + returned : null,
+    hostcount: hostSet.size,
+    pathogencount: pathogenSet.size
   };
   setResultCacheEntry(cacheKey, response);
   return response;

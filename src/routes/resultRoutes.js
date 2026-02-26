@@ -34,7 +34,10 @@ router.get(
   asyncHandler(async (req, res) => {
     const data = await getNetwork({
       resultId: req.query.results,
-      category: req.query.category
+      category: req.query.category,
+      limit: req.query.limit,
+      offset: req.query.offset,
+      sort: req.query.sort
     });
     res.json(data);
   })
